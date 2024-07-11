@@ -1,8 +1,10 @@
 import sys
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QGraphicsScene, QGraphicsView, 
-                             QGraphicsLineItem, QPushButton, QWidget, QHBoxLayout, QColorDialog, QFileDialog, QGraphicsTextItem, QInputDialog, QGraphicsItem)
+                             QGraphicsLineItem, QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsPolygonItem, QPushButton, QWidget, QHBoxLayout, QVBoxLayout, QColorDialog, QFileDialog, QGraphicsTextItem, QInputDialog, QGraphicsItem)
 from PyQt5.QtCore import Qt, QPointF, QRectF, QLineF
-from PyQt5.QtGui import QPen, QColor, QPainter, QImage, QWheelEvent, QTransform
+from PyQt5.QtGui import QPen, QColor, QPainter, QImage, QWheelEvent, QTransform, QPolygonF, QPainterPath
+
+
 
 class FlowchartApp(QMainWindow):
     def __init__(self):
@@ -11,7 +13,7 @@ class FlowchartApp(QMainWindow):
         self.initUI()
         
     def initUI(self):
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 1200, 800)  # Increase window size
         self.setWindowTitle('Flowchart Drawer')
 
         self.central_widget = QWidget()
@@ -21,10 +23,9 @@ class FlowchartApp(QMainWindow):
 
         self.scene = FlowchartScene()
         self.view = FlowchartView(self.scene)
-        
         self.layout.addWidget(self.view)
 
-        self.buttons_layout = QHBoxLayout()
+        self.buttons_layout = QVBoxLayout()  # Change to QVBoxLayout to arrange buttons vertically
         self.layout.addLayout(self.buttons_layout)
 
         self.add_line_button = QPushButton("Draw Line")
@@ -79,8 +80,6 @@ class FlowchartApp(QMainWindow):
         self.toggle_mode_button.clicked.connect(self.toggleSelectMode)
         self.buttons_layout.addWidget(self.toggle_mode_button)
 
-        self.layout.addLayout(self.buttons_layout)
-
     def selectColor(self):
         color = QColorDialog.getColor()
         if color.isValid():
@@ -121,85 +120,6 @@ class FlowchartView(QGraphicsView):
 
         painter.setPen(QPen(Qt.lightGray))
         painter.drawLines(lines)
-
-class FlowchartScene(QGraphicsScene):
-    def __init__(self):
-        super().__init__()
-        self.current_mode = None
-        self.line_color = Qt.black
-        self.start_point = None
-        self.red_dot = None
-        self.select_mode = False
-        self.selected_item = None
-        self.selected_item_start_pos = None
-        self.mouse_start_pos = None
-
-    def setMode(self, mode):
-        self.current_mode = mode
-        self.select_mode = False  # Disable select mode when a drawing mode is selected
-
-    def setLineColor(self, color):
-        self.line_color = color
-
-    def toggleSelectMode(self):
-        self.select_mode = not self.select_mode
-
-    def mousePressEvent(self, event):
-        if self.select_mode:
-            item = self.itemAt(event.scenePos(), QTransform())
-            if item and event.button() == Qt.LeftButton:
-                self.selected_item = item
-                self.selected_item_start_pos = item.pos()
-                self.mouse_start_pos = event.scenePos()
-            else:
-                super().mousePressEvent(event)
-        else:
-            if event.button() == Qt.LeftButton:
-                self.start_point = event.scenePos()
-                if self.current_mode == 'line':
-                    self.line = QGraphicsLineItem(QLineF(self.start_point, self.start_point))
-                    pen = QPen(self.line_color, 2)
-                    self.line.setPen(pen)
-                    self.addItem(self.line)
-                elif self.current_mode == 'arrow':
-                    self.arrow = QGraphicsLineItem(QLineF(self.start_point, self.start_point))
-                    pen = QPen(self.line_color, 2)
-                    self.arrow.setPen(pen)
-                    self.addItem(self.arrow)
-            super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self.select_mode and self.selected_item:
-            delta = event.scenePos() - self.mouse_start_pos
-            self.selected_item.setPos(self.selected_item_start_pos + delta)
-        else:
-            if self.current_mode == 'line' and hasattr(self, 'line'):
-                self.line.setLine(QLineF(self.start_point, event.scenePos()))
-            elif self.current_mode == 'arrow' and hasattr(self, 'arrow'):
-                self.arrow.setLine(QLineF(self.start_point, event.scenePos()))
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        if self.select_mode and self.selected_item:
-            self.selected_item = None
-        else:
-            if event.button() == Qt.LeftButton:
-                if self.current_mode == 'line' and hasattr(self, 'line'):
-                    self.line.setLine(QLineF(self.start_point, event.scenePos()))
-                    self.line = None
-                elif self.current_mode == 'arrow' and hasattr(self, 'arrow'):
-                    self.arrow.setLine(QLineF(self.start_point, event.scenePos()))
-                    self.arrow = None
-            super().mouseReleaseEvent(event)
-
-    def exportAsPNG(self, file_path):
-        rect = self.sceneRect()
-        image = QImage(int(rect.width()), int(rect.height()), QImage.Format_ARGB32)
-        image.fill(Qt.white)
-        painter = QPainter(image)
-        self.render(painter)
-        painter.end()
-        image.save(file_path)
 
 class FlowchartScene(QGraphicsScene):
     def __init__(self):
