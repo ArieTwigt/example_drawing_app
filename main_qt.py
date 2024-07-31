@@ -1,40 +1,67 @@
 import sys
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QGraphicsScene, QGraphicsView, 
-                             QGraphicsLineItem, QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsPolygonItem, QPushButton, QWidget, QHBoxLayout, QVBoxLayout, QColorDialog, QFileDialog, QGraphicsTextItem, QInputDialog, QGraphicsItem)
-from PyQt5.QtCore import Qt, QPointF, QRectF, QLineF
-from PyQt5.QtGui import QPen, QColor, QPainter, QImage, QWheelEvent, QTransform, QPolygonF, QPainterPath
+from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsLineItem, QVBoxLayout, QPushButton, QWidget, QHBoxLayout, QColorDialog, QFileDialog, QGraphicsTextItem, QInputDialog, QGraphicsItem, QDockWidget, QListWidget, QListWidgetItem
+from PyQt5.QtCore import Qt, QPointF, QLineF, QRectF, QSize, QEvent
+from PyQt5.QtGui import QPen, QColor, QPainter, QImage, QTransform, QWheelEvent
 
+
+class ShapeItem(QGraphicsRectItem):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemSendsGeometryChanges)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange:
+            for line in self.scene().lines:
+                line.updatePosition()
+        return super().itemChange(change, value)
+
+
+class ConnectorLine(QGraphicsLineItem):
+    def __init__(self, start_item, end_item, *args):
+        super().__init__(*args)
+        self.start_item = start_item
+        self.end_item = end_item
+        self.setPen(QPen(Qt.black, 2))
+        self.setFlags(QGraphicsItem.ItemIsSelectable)
+
+    def updatePosition(self):
+        self.setLine(QLineF(self.start_item.scenePos() + self.start_item.rect().center(),
+                            self.end_item.scenePos() + self.end_item.rect().center()))
 
 
 class FlowchartApp(QMainWindow):
     def __init__(self):
         super().__init__()
-
         self.initUI()
-        
+
     def initUI(self):
-        self.setGeometry(100, 100, 1200, 800)  # Increase window size
+        self.setGeometry(100, 100, 1000, 800)
         self.setWindowTitle('Flowchart Drawer')
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
 
-        self.layout = QHBoxLayout(self.central_widget)
+        self.layout = QVBoxLayout(self.central_widget)
 
         self.scene = FlowchartScene()
         self.view = FlowchartView(self.scene)
+
         self.layout.addWidget(self.view)
 
-        self.buttons_layout = QVBoxLayout()  # Change to QVBoxLayout to arrange buttons vertically
+        self.buttons_layout = QHBoxLayout()
         self.layout.addLayout(self.buttons_layout)
+
+        self.select_button = QPushButton("Select/Drag")
+        self.select_button.clicked.connect(lambda: self.scene.setMode('select'))
+        self.buttons_layout.addWidget(self.select_button)
 
         self.add_line_button = QPushButton("Draw Line")
         self.add_line_button.clicked.connect(lambda: self.scene.setMode('line'))
         self.buttons_layout.addWidget(self.add_line_button)
 
-        self.add_arrow_button = QPushButton("Draw Arrow")
-        self.add_arrow_button.clicked.connect(lambda: self.scene.setMode('arrow'))
-        self.buttons_layout.addWidget(self.add_arrow_button)
+        self.add_connector_button = QPushButton("Draw Connector")
+        self.add_connector_button.clicked.connect(lambda: self.scene.setMode('connector'))
+        self.buttons_layout.addWidget(self.add_connector_button)
 
         self.add_square_button = QPushButton("Draw Square")
         self.add_square_button.clicked.connect(lambda: self.scene.setMode('square'))
@@ -44,10 +71,6 @@ class FlowchartApp(QMainWindow):
         self.add_rectangle_button.clicked.connect(lambda: self.scene.setMode('rectangle'))
         self.buttons_layout.addWidget(self.add_rectangle_button)
 
-        self.add_diamond_button = QPushButton("Draw Diamond")
-        self.add_diamond_button.clicked.connect(lambda: self.scene.setMode('diamond'))
-        self.buttons_layout.addWidget(self.add_diamond_button)
-
         self.add_circle_button = QPushButton("Draw Circle")
         self.add_circle_button.clicked.connect(lambda: self.scene.setMode('circle'))
         self.buttons_layout.addWidget(self.add_circle_button)
@@ -55,10 +78,6 @@ class FlowchartApp(QMainWindow):
         self.add_text_button = QPushButton("Add Text")
         self.add_text_button.clicked.connect(lambda: self.scene.setMode('text'))
         self.buttons_layout.addWidget(self.add_text_button)
-
-        self.add_text_box_button = QPushButton("Add Text Box")
-        self.add_text_box_button.clicked.connect(lambda: self.scene.setMode('textbox'))
-        self.buttons_layout.addWidget(self.add_text_box_button)
 
         self.color_button = QPushButton("Select Color")
         self.color_button.clicked.connect(self.selectColor)
@@ -76,9 +95,47 @@ class FlowchartApp(QMainWindow):
         self.export_button.clicked.connect(self.exportAsPNG)
         self.buttons_layout.addWidget(self.export_button)
 
-        self.toggle_mode_button = QPushButton("Toggle Select/Draw Mode")
-        self.toggle_mode_button.clicked.connect(self.toggleSelectMode)
-        self.buttons_layout.addWidget(self.toggle_mode_button)
+        self.initShapeTemplates()
+
+    def initShapeTemplates(self):
+        self.shape_dock = QDockWidget("Shape Templates", self)
+        self.shape_list = QListWidget()
+        self.shape_list.setViewMode(QListWidget.IconMode)
+        self.shape_list.setIconSize(QSize(64, 64))
+        self.shape_list.setMovement(QListWidget.Static)
+        self.shape_list.setSpacing(10)
+
+        square_item = QListWidgetItem("Square")
+        square_item.setData(Qt.UserRole, 'square')
+        self.shape_list.addItem(square_item)
+
+        rectangle_item = QListWidgetItem("Rectangle")
+        rectangle_item.setData(Qt.UserRole, 'rectangle')
+        self.shape_list.addItem(rectangle_item)
+
+        circle_item = QListWidgetItem("Circle")
+        circle_item.setData(Qt.UserRole, 'circle')
+        self.shape_list.addItem(circle_item)
+
+        self.shape_dock.setWidget(self.shape_list)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.shape_dock)
+
+        self.shape_list.itemClicked.connect(self.addShape)
+
+    def addShape(self, item):
+        shape_type = item.data(Qt.UserRole)
+        if shape_type == 'square':
+            shape = ShapeItem(0, 0, 100, 100)
+        elif shape_type == 'rectangle':
+            shape = ShapeItem(0, 0, 150, 100)
+        elif shape_type == 'circle':
+            shape = QGraphicsEllipseItem(0, 0, 100, 100)
+            shape.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemSendsGeometryChanges)
+        else:
+            return
+
+        shape.setPen(QPen(Qt.black, 2))
+        self.scene.addItem(shape)
 
     def selectColor(self):
         color = QColorDialog.getColor()
@@ -96,8 +153,6 @@ class FlowchartApp(QMainWindow):
         if file_path:
             self.scene.exportAsPNG(file_path)
 
-    def toggleSelectMode(self):
-        self.scene.toggleSelectMode()
 
 class FlowchartView(QGraphicsView):
     def __init__(self, scene):
@@ -121,105 +176,71 @@ class FlowchartView(QGraphicsView):
         painter.setPen(QPen(Qt.lightGray))
         painter.drawLines(lines)
 
+
 class FlowchartScene(QGraphicsScene):
     def __init__(self):
         super().__init__()
         self.line = None
         self.rect = None
         self.ellipse = None
-        self.diamond = None
-        self.arrow = None
-        self.text_item = None
-        self.text_box = None
-        self.start_point = None
+        self.connector = None
+        self.start_item = None
+        self.end_item = None
         self.current_mode = None
         self.line_color = Qt.black
-        self.red_dot = None
-        self.select_mode = False
-        self.selected_item = None
-        self.selected_item_start_pos = None
-        self.mouse_start_pos = None
+        self.lines = []
 
     def setMode(self, mode):
         self.current_mode = mode
-        self.select_mode = False  # Disable select mode when a drawing mode is selected
 
     def setLineColor(self, color):
         self.line_color = color
 
-    def toggleSelectMode(self):
-        self.select_mode = not self.select_mode
-
     def mousePressEvent(self, event):
-        if self.select_mode:
-            item = self.itemAt(event.scenePos(), QTransform())
-            if item and event.button() == Qt.LeftButton:
-                self.selected_item = item
-                self.selected_item_start_pos = self.selected_item.pos()
-                self.mouse_start_pos = event.scenePos()
-            else:
-                super().mousePressEvent(event)
-            return
-
         if event.button() == Qt.LeftButton:
             self.start_point = event.scenePos()
-            self.start_point = self.getClosestPoint(self.start_point)
-            if self.current_mode == 'line':
+            if self.current_mode == 'select':
+                item = self.itemAt(self.start_point, QTransform())
+                if item:
+                    item.setSelected(True)
+            elif self.current_mode == 'line':
                 self.line = QGraphicsLineItem(QLineF(self.start_point, self.start_point))
                 pen = QPen(self.line_color, 2)
                 self.line.setPen(pen)
                 self.addItem(self.line)
-            elif self.current_mode == 'arrow':
-                self.arrow = QGraphicsLineItem(QLineF(self.start_point, self.start_point))
-                pen = QPen(self.line_color, 2)
-                self.arrow.setPen(pen)
-                self.addItem(self.arrow)
+            elif self.current_mode == 'connector':
+                self.start_item = self.itemAt(self.start_point, QTransform())
+                if self.start_item:
+                    self.connector = QGraphicsLineItem(QLineF(self.start_point, self.start_point))
+                    pen = QPen(self.line_color, 2)
+                    self.connector.setPen(pen)
+                    self.addItem(self.connector)
             elif self.current_mode in ['square', 'rectangle']:
-                self.rect = QGraphicsRectItem(QRectF(self.start_point, self.start_point))
+                self.rect = ShapeItem(0, 0, 0, 0)
                 pen = QPen(self.line_color, 2)
                 self.rect.setPen(pen)
                 self.addItem(self.rect)
-            elif self.current_mode == 'diamond':
-                self.diamond = QGraphicsPolygonItem(self.createDiamondPolygon(QRectF(self.start_point, self.start_point)))
-                pen = QPen(self.line_color, 2)
-                self.diamond.setPen(pen)
-                self.addItem(self.diamond)
             elif self.current_mode == 'circle':
-                self.ellipse = QGraphicsEllipseItem(QRectF(self.start_point, self.start_point))
+                self.ellipse = QGraphicsEllipseItem(0, 0, 0, 0)
                 pen = QPen(self.line_color, 2)
                 self.ellipse.setPen(pen)
                 self.addItem(self.ellipse)
-            elif self.current_mode == 'textbox':
-                self.text_box = QGraphicsRectItem(QRectF(self.start_point, self.start_point))
-                pen = QPen(self.line_color, 2)
-                self.text_box.setPen(pen)
-                self.addItem(self.text_box)
-
+            elif self.current_mode == 'text':
+                text, ok = QInputDialog.getText(None, "Input Text", "Enter your text:")
+                if ok and text:
+                    self.text_item = QGraphicsTextItem(text)
+                    self.text_item.setDefaultTextColor(self.line_color)
+                    self.text_item.setPos(self.start_point)
+                    self.text_item.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable)
+                    self.addItem(self.text_item)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self.select_mode and self.selected_item:
-            delta = event.scenePos() - self.mouse_start_pos
-            self.selected_item.setPos(self.selected_item_start_pos + delta)
-            return
-
         end_point = event.scenePos()
-        closest_point = self.getClosestPoint(end_point)
-        if closest_point != end_point:
-            if self.red_dot is None:
-                self.red_dot = self.addEllipse(closest_point.x() - 3, closest_point.y() - 3, 6, 6, QPen(Qt.red), Qt.red)
-            else:
-                self.red_dot.setRect(closest_point.x() - 3, closest_point.y() - 3, 6, 6)
-        else:
-            if self.red_dot is not None:
-                self.removeItem(self.red_dot)
-                self.red_dot = None
-
         if self.current_mode == 'line' and self.line is not None:
-            self.line.setLine(QLineF(self.start_point, closest_point))
-        elif self.current_mode == 'arrow' and self.arrow is not None:
-            self.arrow.setLine(QLineF(self.start_point, closest_point))
-            self.addArrowHead(self.arrow)
+            self.line.setLine(QLineF(self.start_point, end_point))
+        elif self.current_mode == 'connector' and self.connector is not None:
+            self.connector.setLine(QLineF(self.start_point, end_point))
         elif self.current_mode in ['square', 'rectangle'] and self.rect is not None:
             rect = QRectF(self.start_point, end_point).normalized()
             if self.current_mode == 'square':
@@ -227,34 +248,26 @@ class FlowchartScene(QGraphicsScene):
                 rect.setWidth(side)
                 rect.setHeight(side)
             self.rect.setRect(rect)
-        elif self.current_mode == 'diamond' and self.diamond is not None:
-            rect = QRectF(self.start_point, end_point).normalized()
-            diamond_polygon = self.createDiamondPolygon(rect)
-            self.diamond.setPolygon(diamond_polygon)
         elif self.current_mode == 'circle' and self.ellipse is not None:
             rect = QRectF(self.start_point, end_point).normalized()
             diameter = min(rect.width(), rect.height())
             self.ellipse.setRect(rect.topLeft().x(), rect.topLeft().y(), diameter, diameter)
-        elif self.current_mode == 'textbox' and self.text_box is not None:
-            rect = QRectF(self.start_point, end_point).normalized()
-            self.text_box.setRect(rect)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self.select_mode and self.selected_item:
-            self.selected_item = None
-            return
-
         if event.button() == Qt.LeftButton:
             end_point = event.scenePos()
-            closest_point = self.getClosestPoint(end_point)
             if self.current_mode == 'line' and self.line is not None:
-                self.line.setLine(QLineF(self.start_point, closest_point))
+                self.line.setLine(QLineF(self.start_point, end_point))
                 self.line = None
-            elif self.current_mode == 'arrow' and self.arrow is not None:
-                self.arrow.setLine(QLineF(self.start_point, closest_point))
-                self.addArrowHead(self.arrow)
-                self.arrow = None
+            elif self.current_mode == 'connector' and self.connector is not None:
+                self.end_item = self.itemAt(end_point, QTransform())
+                if self.start_item and self.end_item and self.start_item != self.end_item:
+                    connector = ConnectorLine(self.start_item, self.end_item)
+                    self.lines.append(connector)
+                    self.addItem(connector)
+                self.removeItem(self.connector)
+                self.connector = None
             elif self.current_mode in ['square', 'rectangle'] and self.rect is not None:
                 rect = QRectF(self.start_point, end_point).normalized()
                 if self.current_mode == 'square':
@@ -263,74 +276,12 @@ class FlowchartScene(QGraphicsScene):
                     rect.setHeight(side)
                 self.rect.setRect(rect)
                 self.rect = None
-            elif self.current_mode == 'diamond' and self.diamond is not None:
-                rect = QRectF(self.start_point, end_point).normalized()
-                diamond_polygon = self.createDiamondPolygon(rect)
-                self.diamond.setPolygon(diamond_polygon)
-                self.diamond = None
             elif self.current_mode == 'circle' and self.ellipse is not None:
                 rect = QRectF(self.start_point, end_point).normalized()
                 diameter = min(rect.width(), rect.height())
                 self.ellipse.setRect(rect.topLeft().x(), rect.topLeft().y(), diameter, diameter)
                 self.ellipse = None
-            elif self.current_mode == 'textbox' and self.text_box is not None:
-                rect = QRectF(self.start_point, end_point).normalized()
-                self.text_box.setRect(rect)
-                text, ok = QInputDialog.getText(None, "Input Text", "Enter your text:")
-                if ok and text:
-                    text_item = QGraphicsTextItem(text, self.text_box)
-                    text_item.setDefaultTextColor(self.line_color)
-                    text_item.setPos(rect.topLeft())
-                    text_item.setFlags(QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemIsMovable)
-                self.text_box = None
-
-            if self.red_dot is not None:
-                self.removeItem(self.red_dot)
-                self.red_dot = None
-
         super().mouseReleaseEvent(event)
-
-    def createDiamondPolygon(self, rect):
-        diamond = QPolygonF([
-            QPointF(rect.center().x(), rect.top()),
-            QPointF(rect.right(), rect.center().y()),
-            QPointF(rect.center().x(), rect.bottom()),
-            QPointF(rect.left(), rect.center().y())
-        ])
-        return diamond
-
-    def getClosestPoint(self, point, threshold=10):
-        min_distance = float('inf')
-        closest_point = point
-        for item in self.items():
-            if isinstance(item, QGraphicsLineItem):
-                line = item.line()
-                for pt in [line.p1(), line.p2()]:
-                    distance = (point - pt).manhattanLength()
-                    if distance < min_distance:
-                        min_distance = distance
-                        closest_point = pt
-        if min_distance < threshold:
-            return closest_point
-        return point
-
-    def addArrowHead(self, line):
-        line_end = line.line().p2()
-        line_start = line.line().p1()
-        angle = line.line().angle()
-
-        arrow_head = QPolygonF()
-
-        arrow_size = 10
-        p1 = QPointF(line_end.x() + arrow_size * QPointF(1, 0).x(), line_end.y() + arrow_size * QPointF(1, 0).y())
-        p2 = QPointF(line_end.x() - arrow_size * QPointF(1, 0).x(), line_end.y() - arrow_size * QPointF(1, 0).y())
-
-        path = QPainterPath(line_end)
-        path.lineTo(p1)
-        path.moveTo(line_end)
-        path.lineTo(p2)
-
-        arrow = self.addPath(path, QPen(self.line_color, 2))
 
     def exportAsPNG(self, file_path):
         rect = self.sceneRect()
@@ -348,8 +299,9 @@ class FlowchartScene(QGraphicsScene):
             else:
                 self.views()[0].scale(0.8, 0.8)
 
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    ex = FlowchartApp()
-    ex.show()
+    game = FlowchartApp()
+    game.show()
     sys.exit(app.exec_())
